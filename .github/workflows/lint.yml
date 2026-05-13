@@ -1,0 +1,132 @@
+name: lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.0"
+          # Disable the Node wrapper: it buffers stdout/stderr, which causes
+          # `terraform console` to hang when fed expressions via a pipe in CI.
+          terraform_wrapper: false
+
+      - name: JSON parse
+        run: |
+          set -e
+          for f in policies/*.json; do
+            python3 -c "import json; json.load(open('$f'))" \
+              || { echo "BROKEN: $f"; exit 1; }
+            echo "ok: $f"
+          done
+
+      - name: Substitution + post-substitution lint (round-trip)
+        run: |
+          set -e
+          ACCOUNT_ID="123456789012"
+          AGENT_ROLE_NAME="loki-agent-role"
+          IAM_PATH="loki/"
+          BOUNDARY_POLICY_NAME="LokiPermissionsBoundary"
+          TRAIL_BUCKET_NAME="my-org-cloudtrail-logs"
+          KMS_REGION="us-east-1"
+          TRAIL_KMS_KEY_ID="abcd1234-abcd-1234-abcd-123456789012"
+
+          mkdir -p out
+          for f in policies/*.json; do
+            # Longest tokens first to prevent IAM_PATH matching inside IAM_PATHAGENT_ROLE_NAME.
+            # MIRROR of README.md substitution helper — keep the two in sync.
+            sed \
+              -e "s|IAM_PATHAGENT_ROLE_NAME|${IAM_PATH}${AGENT_ROLE_NAME}|g" \
+              -e "s|IAM_PATHLokiPermissionsBoundary|${IAM_PATH}${BOUNDARY_POLICY_NAME}|g" \
+              -e "s|IAM_PATH|${IAM_PATH}|g" \
+              -e "s|ACCOUNT_ID|${ACCOUNT_ID}|g" \
+              -e "s|TRAIL_BUCKET_NAME|${TRAIL_BUCKET_NAME}|g" \
+              -e "s|KMS_REGION|${KMS_REGION}|g" \
+              -e "s|TRAIL_KMS_KEY_ID|${TRAIL_KMS_KEY_ID}|g" \
+              "$f" > "out/$(basename "$f")"
+          done
+
+          # Lint 1: no placeholders should remain (only check tokens that JSON actually contains)
+          # Placeholders are uppercase tokens that should not survive substitution.
+          # No word boundaries: substitution outputs are slash/quote-bounded in JSON,
+          # and \b doesn't fire between two word chars (e.g. \bIAM_PATH\b would NOT
+          # match IAM_PATHAGENT_ROLE_NAME because the trailing 'A' is a word char).
+          if grep -E '(ACCOUNT_ID|AGENT_ROLE_NAME|IAM_PATH|KMS_REGION|TRAIL_BUCKET_NAME|TRAIL_KMS_KEY_ID)' out/*.json; then
+            echo "Placeholders survived substitution above"; exit 1
+          fi
+          # Lint 2: no double-slash IAM ARNs (catches IAM_PATH leading-slash bug)
+          if grep -E 'role//|policy//|instance-profile//' out/*.json; then
+            echo "Double-slash ARN detected above (IAM_PATH substitution bug)"; exit 1
+          fi
+          # Lint 3: still parse as JSON
+          for f in out/*.json; do python3 -c "import json; json.load(open('$f'))"; done
+          echo "ok: substitution helper produces valid policies"
+
+      - name: Terraform fmt
+        working-directory: terraform
+        run: terraform fmt -check -recursive
+
+      - name: Terraform validate
+        working-directory: terraform
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+
+      - name: JSON ↔ Terraform per-Sid parity (all 3 policies)
+        # The Terraform module and policies/*.json must encode identical Sid
+        # → (Action|NotAction) sets. Drift would leave one deployment path
+        # under-protected (or over-permissive). We render each Terraform-emitted
+        # statement list via `terraform console` and diff per-Sid action sets.
+        # Per-Sid (vs union-flat) catches the case where an action moves
+        # between statements with different Resource scopes.
+        working-directory: terraform
+        run: |
+          set -e
+
+          # Re-init in this step (each GHA step starts in a fresh shell;
+          # while files persist, the terraform console subcommand needs a
+          # populated .terraform/ that matches the current init flags).
+          terraform init -backend=false -input=false
+
+          cat > ci.auto.tfvars <<'TFVARS'
+          account_id        = "123456789012"
+          trail_bucket_name = "my-org-cloudtrail-logs"
+          trail_kms_key_arn = "arn:aws:kms:us-east-1:123456789012:key/abcd1234-abcd-1234-abcd-123456789012"
+          TFVARS
+
+          # (json_file, terraform_expression) tuples — one per policy.
+          # The expression must render the full Statement list, normalizing
+          # Action/NotAction lists vs strings.
+          # `terraform console` is wrapped in `timeout` because it can hang
+          # on CI runners (no TTY) if init state is incomplete — fail loud
+          # instead of silently consuming the job's wall-clock budget.
+          render_tf() {
+            local out="$1"; local expr="$2"
+            echo "$expr" | timeout 30 terraform console > "${out}.raw"
+            if [ ! -s "${out}.raw" ] || grep -qE '^(Error|Warning):' "${out}.raw"; then
+              echo "terraform console failed for ${out}:"; cat "${out}.raw"; exit 1
+            fi
+            python3 -c 'import json; print(json.loads(open("'${out}'.raw").read().strip()))' > "$out"
+            rm "${out}.raw"
+          }
+
+          render_tf tf-deny.json \
+            'jsonencode([for s in concat(local.deny_guardrails_base_statements, [local.deny_trail_storage_statement], [local.deny_trail_kms_statement]) : { Sid = s.Sid, Action = try(tolist(s.Action), can(s.Action) ? [s.Action] : []), NotAction = try(tolist(s.NotAction), can(s.NotAction) ? [s.NotAction] : []) }])'
+
+          render_tf tf-iam-scoped.json \
+            'jsonencode([for s in local.iam_scoped_statements : { Sid = s.Sid, Action = try(tolist(s.Action), can(s.Action) ? [s.Action] : []), NotAction = try(tolist(s.NotAction), can(s.NotAction) ? [s.NotAction] : []) }])'
+
+          render_tf tf-boundary.json \
+            'jsonencode([for s in local.permissions_boundary_statements : { Sid = s.Sid, Action = try(tolist(s.Action), can(s.Action) ? [s.Action] : []), NotAction = try(tolist(s.NotAction), can(s.NotAction) ? [s.NotAction] : []) }])'
+
+          rm ci.auto.tfvars
+
+          python3 ../scripts/check_parity.py

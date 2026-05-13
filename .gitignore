@@ -1,0 +1,18 @@
+# Terraform local state and provider cache
+**/.terraform/
+**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+
+# Tfvars often contain secrets
+*.auto.tfvars
+*.tfvars
+!example.tfvars
+
+# OS / editor
+.DS_Store
+*.swp
+*.swo

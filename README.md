@@ -111,30 +111,44 @@ Combined with `PowerUserAccess` (AWS managed), this gives the agent full service
 
 ## Quick Start
 
+> ⚠️ **Step 0 first.** The `policies/*.json` files contain literal placeholders
+> (`ACCOUNT_ID`, `IAM_PATH`, `TRAIL_BUCKET_NAME`, etc.). Handing raw template files
+> to `aws iam create-policy` fails with `MalformedPolicyDocument`. Run the
+> substitution helper from the [Customization](#customization) section below
+> first; it produces resolved `out/*.json` files. The commands below consume
+> `out/*.json`, not `policies/*.json`.
+
 ```bash
+# 0. Resolve placeholders → out/*.json (see "Customization" section for the helper)
+#    After running it, you should have: out/permissions-boundary.json, out/iam-scoped.json,
+#    out/deny-guardrails.json, out/trust-policy.json
+
 # 1. Create the permissions boundary (admin does this)
 aws iam create-policy \
   --policy-name LokiPermissionsBoundary \
   --path "/loki/" \
-  --policy-document file://policies/permissions-boundary.json
+  --policy-document file://out/permissions-boundary.json
 
 # 2. Create the agent role
 aws iam create-role \
   --role-name loki-agent-role \
-  --assume-role-policy-document file://policies/trust-policy.json
+  --path "/loki/" \
+  --assume-role-policy-document file://out/trust-policy.json
 
 # 3. Attach all policies
 aws iam attach-role-policy --role-name loki-agent-role \
   --policy-arn arn:aws:iam::aws:policy/PowerUserAccess
 aws iam put-role-policy --role-name loki-agent-role \
   --policy-name LokiIAMScoped \
-  --policy-document file://policies/iam-scoped.json
+  --policy-document file://out/iam-scoped.json
 aws iam put-role-policy --role-name loki-agent-role \
   --policy-name LokiDenyGuardrails \
-  --policy-document file://policies/deny-guardrails.json
+  --policy-document file://out/deny-guardrails.json
 
 # 4. Create instance profile and attach to EC2
-aws iam create-instance-profile --instance-profile-name loki-agent-profile
+aws iam create-instance-profile \
+  --instance-profile-name loki-agent-profile \
+  --path "/loki/"
 aws iam add-role-to-instance-profile \
   --instance-profile-name loki-agent-profile \
   --role-name loki-agent-role
@@ -143,7 +157,26 @@ aws ec2 associate-iam-instance-profile \
   --iam-instance-profile Name=loki-agent-profile
 ```
 
-See [docs/](docs/) for detailed setup, migration, and Terraform integration guides.
+See [docs/](docs/) for detailed policy architecture and Terraform integration notes.
+
+### Terraform
+
+```hcl
+module "loki_permissions" {
+  source = "github.com/inceptionstack/loki-permissions//terraform"
+
+  account_id      = "123456789012"
+  agent_role_name = "loki-agent-role"
+
+  # Optional: scoped denies on the audit-trail S3 bucket and KMS key.
+  # Leave null if you have no CloudTrail or it's unencrypted.
+  # IMPORTANT: these resources must be managed outside this state.
+  trail_bucket_name = "my-org-cloudtrail-logs"
+  trail_kms_key_arn = "arn:aws:kms:us-east-1:123456789012:key/abcd1234-..."
+}
+```
+
+The `trail_kms_key_arn` variable has plan-time validation — partial values (key UUIDs, alias ARNs) are rejected. If your trail is unencrypted, leave it `null` and the `DenyTrailKmsTampering` statement is omitted entirely (preferred over deploying a dead deny).
 
 ## Repository Structure
 
@@ -156,10 +189,14 @@ See [docs/](docs/) for detailed setup, migration, and Terraform integration guid
 ├── terraform/                   # Terraform module
 │   ├── main.tf                 # Agent role + policies
 │   ├── variables.tf            # Configurable inputs
-│   └── outputs.tf              # ARNs and names
+│   ├── outputs.tf              # ARNs and names
+│   └── examples/               # Standalone consumer examples (NOT part of module)
+│       ├── README.md
+│       └── downstream-consumer.tf
 ├── docs/
-│   ├── policy-design.md        # Full policy architecture docs
-│   └── migration-guide.md      # Step-by-step migration from admin
+│   └── policy-design.md        # Full policy architecture docs
+├── .github/workflows/
+│   └── lint.yml                # JSON parse, sub round-trip, TF validate, JSON↔TF parity
 └── README.md
 ```
 
@@ -170,10 +207,74 @@ Before deploying, update these values in the policy files:
 | Placeholder | Description | Example |
 |------------|-------------|---------|
 | `ACCOUNT_ID` | Your AWS account ID | `123456789012` |
-| `AGENT_ROLE_NAME` | Name of the agent's IAM role | `loki-agent-role` |
-| `BOUNDARY_POLICY_NAME` | Name of the permissions boundary | `LokiPermissionsBoundary` |
-| `IAM_PATH` | Path prefix for agent-created roles | `/loki/` |
+| `AGENT_ROLE_NAME` | Bare name of the agent's IAM role (no path). The path is supplied separately via `IAM_PATH`. Used by `DenySelfEscalation` together with `IAM_PATH` to build the role ARN. | `loki-agent-role` |
+| `IAM_PATH` | Path prefix for agent-created roles. **Substitute with NO leading slash** (e.g. `loki/`) so it composes correctly into ARNs as `role/loki/...`. The Terraform variable accepts the conventional leading-slash form (`/loki/`) and handles ARN composition itself. | `loki/` (in JSON) <br> `/loki/` (Terraform var) |
+| `TRAIL_BUCKET_NAME` | S3 bucket holding CloudTrail logs (used by `DenyTrailStorageTampering`) | `my-org-cloudtrail-logs` |
+| `KMS_REGION` | Region of the trail's KMS CMK (used by `DenyTrailKmsTampering`) | `us-east-1` |
+| `TRAIL_KMS_KEY_ID` | UUID of the trail's KMS CMK (used by `DenyTrailKmsTampering`) | `abcd1234-...` |
+
+> ⚠️ **Both `TRAIL_*` placeholders must be replaced with real values before deployment.** A leftover literal placeholder will deploy a syntactically valid statement that matches no resource — silent no-op. If your trail is **unencrypted**, delete the entire `DenyTrailKmsTampering` statement rather than supplying a fake KMS ARN. Likewise, if you have no CloudTrail at all, delete `DenyTrailStorageTampering` and `DenyTrailKmsTampering`.
+>
+> **Pre-deploy lint** (run after substitution, before `aws iam put-role-policy`):
+>
+> ```bash
+> # 1. No literal placeholders should remain
+> ! grep -E 'ACCOUNT_ID|AGENT_ROLE_NAME|IAM_PATH|KMS_REGION|TRAIL_(BUCKET_NAME|KMS_KEY_ID)' out/*.json
+>
+> # 2. No double-slash ARNs (catches IAM_PATH substituted with leading slash)
+> ! grep -E 'role//|policy//|instance-profile//' out/*.json
+>
+> # 3. Strict JSON parse on the substituted output (templates are checked by CI)
+> for f in out/*.json; do python3 -c "import json; json.load(open('$f'))" || echo "BROKEN: $f"; done
+> ```
+>
+> **Substitution helper** (avoids ordering footguns when tokens share substrings, e.g. `IAM_PATH` is a prefix of `IAM_PATHAGENT_ROLE_NAME`):
+>
+> ```bash
+> # Edit these for your environment
+> ACCOUNT_ID="123456789012"
+> AGENT_ROLE_NAME="loki-agent-role"
+> IAM_PATH="loki/"                # NO leading slash for JSON substitution
+> TRAIL_BUCKET_NAME="my-org-cloudtrail-logs"
+> KMS_REGION="us-east-1"
+> TRAIL_KMS_KEY_ID="abcd1234-abcd-1234-abcd-123456789012"
+>
+> # Substitute longest tokens first — prevents IAM_PATH matching inside IAM_PATHAGENT_ROLE_NAME.
+> # PARALLEL to `.github/workflows/lint.yml` substitution step but NOT identical:
+> # this README hardcodes "LokiPermissionsBoundary" while CI uses ${BOUNDARY_POLICY_NAME}.
+> # The two paths are equivalent for the default boundary name; if the boundary is
+> # renamed in Terraform, this CLI flow does not pick it up. (Extract to
+> # scripts/substitute.sh if drift becomes a problem in practice.)
+> #
+> # NOTE: The JSON template (this CLI flow) hardcodes the boundary name
+> # "LokiPermissionsBoundary". To use a different boundary name, either
+> # (a) deploy via the Terraform module which parameterizes it as
+> # var.boundary_policy_name, or (b) edit the literal in policies/*.json
+> # before running this helper.
+> mkdir -p out
+> for f in policies/*.json; do
+>   sed \
+>     -e "s|IAM_PATHAGENT_ROLE_NAME|${IAM_PATH}${AGENT_ROLE_NAME}|g" \
+>     -e "s|IAM_PATHLokiPermissionsBoundary|${IAM_PATH}LokiPermissionsBoundary|g" \
+>     -e "s|IAM_PATH|${IAM_PATH}|g" \
+>     -e "s|ACCOUNT_ID|${ACCOUNT_ID}|g" \
+>     -e "s|TRAIL_BUCKET_NAME|${TRAIL_BUCKET_NAME}|g" \
+>     -e "s|KMS_REGION|${KMS_REGION}|g" \
+>     -e "s|TRAIL_KMS_KEY_ID|${TRAIL_KMS_KEY_ID}|g" \
+>     "$f" > "out/$(basename "$f")"
+> done
+>
+> # Then run the lint above against out/*.json
+> ```
+>
+> The KMS resource is split into `KMS_REGION:ACCOUNT_ID:key/TRAIL_KMS_KEY_ID` rather than a single `TRAIL_KMS_KEY_ARN` placeholder so partial substitution still produces an ARN-shaped string — a common mistake (pasting only the key UUID) at least fails loudly instead of deploying a dead deny.
+>
+> **Day-2 ops warning:** `DenyTrailStorageTampering` blocks `s3:PutBucketPolicy`, `PutEncryptionConfiguration`, `PutBucketVersioning`, etc. on the trail bucket; `DenyTrailKmsTampering` blocks `kms:PutKeyPolicy`, `ScheduleKeyDeletion`, etc. on the trail's CMK. The trail bucket and KMS key **must be managed outside this agent's Terraform state** (separate state file, separate role, or admin-only). Otherwise day-2 maintenance — KMS key rotation, bucket policy update for new accounts, lifecycle-rule changes — will silently fail with no remediation path until the deny is lifted manually. Recommended layout: a dedicated `audit-trail/` Terraform module owned by the platform/security team, run with an admin role; this `loki-permissions` module references its outputs but never writes to the bucket/key.
+>
+> **Terraform users:** if you deploy via the `terraform/` module, set `trail_bucket_name` and `trail_kms_key_arn` (full ARN) variables — the module variable validation rejects partial ARNs at plan-time. Leave them `null` to skip the trail-storage and trail-KMS statements entirely.
 
 ## License
 
-MIT
+Apache License 2.0 — see [LICENSE](LICENSE).
+
+SPDX-License-Identifier: Apache-2.0
