@@ -273,6 +273,20 @@ Before deploying, update these values in the policy files:
 >
 > **Terraform users:** if you deploy via the `terraform/` module, set `trail_bucket_name` and `trail_kms_key_arn` (full ARN) variables — the module variable validation rejects partial ARNs at plan-time. Leave them `null` to skip the trail-storage and trail-KMS statements entirely.
 
+## Contributing
+
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). The repo is
+opinionated about a specific threat model (autonomous agent on private subnet,
+message-driven control); changes that fit that model land easiest.
+
+## Security
+
+Found a way to bypass one of the documented denies, widen scope past the agent
+path, or blind audit infrastructure? Do **not** open a public issue. See
+[SECURITY.md](SECURITY.md) for private disclosure (security@inceptionstack.dev).
+
+Community guidelines: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) (Contributor Covenant 2.1).
+
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE).
