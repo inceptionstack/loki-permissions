@@ -38,10 +38,16 @@
         "iam:PutRolePolicy",
         "iam:DeleteRolePolicy",
         "iam:UpdateAssumeRolePolicy",
-        "iam:DeleteRole"
+        "iam:DeleteRole",
+        "iam:TagRole",
+        "iam:UntagRole",
+        "iam:UpdateRole",
+        "iam:UpdateRoleDescription",
+        "iam:PutRolePermissionsBoundary",
+        "iam:DeleteRolePermissionsBoundary"
       ],
       "Resource": [
-        "arn:aws:iam::ACCOUNT_ID:role/AGENT_ROLE_NAME"
+        "arn:aws:iam::ACCOUNT_ID:role/IAM_PATHAGENT_ROLE_NAME"
       ]
     },
     {
@@ -65,7 +71,11 @@
         "iam:DetachRolePolicy",
         "iam:UpdateAssumeRolePolicy",
         "iam:PutRolePermissionsBoundary",
-        "iam:DeleteRolePermissionsBoundary"
+        "iam:DeleteRolePermissionsBoundary",
+        "iam:TagRole",
+        "iam:UntagRole",
+        "iam:UpdateRole",
+        "iam:UpdateRoleDescription"
       ],
       "NotResource": [
         "arn:aws:iam::ACCOUNT_ID:role/IAM_PATH*",
@@ -102,6 +112,116 @@
         "iam:SetDefaultPolicyVersion"
       ],
       "Resource": "arn:aws:iam::ACCOUNT_ID:policy/IAM_PATHLokiPermissionsBoundary"
+    },
+    {
+      "Sid": "DenyCloudTrailTampering",
+      "Effect": "Deny",
+      "Action": [
+        "cloudtrail:CreateTrail",
+        "cloudtrail:CreateEventDataStore",
+        "cloudtrail:CreateChannel",
+        "cloudtrail:StopLogging",
+        "cloudtrail:DeleteTrail",
+        "cloudtrail:UpdateTrail",
+        "cloudtrail:PutEventSelectors",
+        "cloudtrail:PutInsightSelectors",
+        "cloudtrail:PutResourcePolicy",
+        "cloudtrail:DeleteResourcePolicy",
+        "cloudtrail:DeleteEventDataStore",
+        "cloudtrail:UpdateEventDataStore",
+        "cloudtrail:DeleteChannel",
+        "cloudtrail:UpdateChannel"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyAuditServiceTampering",
+      "Effect": "Deny",
+      "Action": [
+        "config:DeleteConfigurationRecorder",
+        "config:StopConfigurationRecorder",
+        "config:PutConfigurationRecorder",
+        "config:DeleteDeliveryChannel",
+        "config:PutDeliveryChannel",
+        "config:DeleteConfigRule",
+        "config:DeleteConfigurationAggregator",
+        "config:DeleteOrganizationConfigRule",
+        "config:DeleteRetentionConfiguration",
+        "config:DeleteRemediationConfiguration",
+        "config:DeleteEvaluationResults",
+        "guardduty:DeleteDetector",
+        "guardduty:UpdateDetector",
+        "guardduty:DisassociateFromMasterAccount",
+        "guardduty:StopMonitoringMembers",
+        "guardduty:DeletePublishingDestination",
+        "guardduty:UpdatePublishingDestination",
+        "guardduty:DisassociateMembers",
+        "guardduty:DeleteMembers",
+        "guardduty:UpdateMemberDetectors",
+        "guardduty:CreateFilter",
+        "guardduty:UpdateFilter",
+        "guardduty:DeleteFilter",
+        "securityhub:DisableSecurityHub",
+        "securityhub:DisassociateFromMasterAccount",
+        "securityhub:BatchDisableStandards",
+        "securityhub:UpdateStandardsControl",
+        "securityhub:DeleteInsight",
+        "securityhub:UpdateInsight",
+        "securityhub:BatchUpdateFindings"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyTrailStorageTampering",
+      "Effect": "Deny",
+      "Action": [
+        "s3:DeleteBucket",
+        "s3:DeleteBucketPolicy",
+        "s3:PutBucketPolicy",
+        "s3:PutBucketAcl",
+        "s3:PutBucketPublicAccessBlock",
+        "s3:PutBucketOwnershipControls",
+        "s3:PutBucketNotification",
+        "s3:PutBucketWebsite",
+        "s3:PutBucketVersioning",
+        "s3:PutBucketLogging",
+        "s3:PutLifecycleConfiguration",
+        "s3:PutReplicationConfiguration",
+        "s3:PutEncryptionConfiguration",
+        "s3:PutBucketObjectLockConfiguration",
+        "s3:DeleteObject",
+        "s3:DeleteObjectVersion",
+        "s3:PutObject",
+        "s3:PutObjectAcl",
+        "s3:PutObjectLegalHold",
+        "s3:PutObjectRetention",
+        "s3:BypassGovernanceRetention"
+      ],
+      "Resource": [
+        "arn:aws:s3:::TRAIL_BUCKET_NAME",
+        "arn:aws:s3:::TRAIL_BUCKET_NAME/*"
+      ]
+    },
+    {
+      "Sid": "DenyTrailKmsTampering",
+      "Effect": "Deny",
+      "Action": [
+        "kms:ScheduleKeyDeletion",
+        "kms:DisableKey",
+        "kms:PutKeyPolicy",
+        "kms:CreateGrant",
+        "kms:RevokeGrant",
+        "kms:CancelKeyDeletion",
+        "kms:UpdateAlias",
+        "kms:DeleteAlias",
+        "kms:PutResourcePolicy",
+        "kms:DeleteResourcePolicy",
+        "kms:ImportKeyMaterial",
+        "kms:DeleteImportedKeyMaterial"
+      ],
+      "Resource": [
+        "arn:aws:kms:KMS_REGION:ACCOUNT_ID:key/TRAIL_KMS_KEY_ID"
+      ]
     }
   ]
 }

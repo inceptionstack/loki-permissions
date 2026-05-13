@@ -2,6 +2,18 @@
 #
 # Add this to your project's Terraform to create IAM roles
 # that comply with the agent's scoped permissions.
+#
+# ⚠️ IMPORTANT: This example HARDCODES the defaults from the loki-permissions
+# module:
+#   - path = "/loki/"                          (matches module var.iam_path default)
+#   - boundary policy name "LokiPermissionsBoundary" (matches module var.boundary_policy_name default)
+#
+# If your loki-permissions module deployment customizes EITHER of these vars,
+# you MUST update the literals below to match. Otherwise:
+#   - path mismatch    → DenyRoleManagementOutsideAgentPath blocks role creation
+#   - boundary mismatch → DenyCreateRoleWithoutBoundary blocks role creation
+# Both fail at apply time with cryptic IAM errors. Parameterize via
+# variables if you expect to change them per-environment.
 
 variable "account_id" {
   type = string
