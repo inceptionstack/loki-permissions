@@ -24,7 +24,7 @@ This policy set is designed for **autonomous AI coding/DevOps agents** (e.g., [O
 │  │  │  • Terraform CLI                    │  │  │
 │  │  │  • AWS CLI                          │  │  │
 │  │  │  • Git (CodeCommit / GitHub)        │  │  │
-│  │  │  • Docker (for inspecting images)   │  │  │
+│  │  │  • Docker                           │  │  │
 │  │  │                                     │  │  │
 │  │  │  Auth: EC2 Instance Profile (IMDSv2)│  │  │
 │  │  └─────────────────────────────────────┘  │  │
@@ -46,7 +46,6 @@ This policy set is designed for **autonomous AI coding/DevOps agents** (e.g., [O
 - **No inbound access.** The EC2 instance has no public IP, no SSH, no open ports. The agent communicates with its human operator through a messaging platform (Telegram, Discord, etc.), not through direct network access.
 - **Outbound only.** NAT Gateway allows HTTPS egress for AWS API calls, git operations, and package managers. No arbitrary outbound connections.
 - **IMDSv2 only.** Instance metadata service requires session tokens (hop limit ≥2 for containers). No IMDSv1 fallback.
-- **No Docker builds on the instance.** Container images are built exclusively through CodePipeline/CodeBuild. The agent triggers pipelines, not local Docker builds.
 - **Single-tenant.** One agent per instance. The agent operates on behalf of one human operator.
 - **Workspace isolation.** The agent's working directory is its only persistent storage. All infrastructure is managed through Terraform (state in S3) and CI/CD pipelines.
 
