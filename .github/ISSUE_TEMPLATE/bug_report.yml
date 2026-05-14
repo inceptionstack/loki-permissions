@@ -1,0 +1,46 @@
+name: Bug report
+description: A documented deny isn't blocking what it should, or an allow is breaking something it shouldn't
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Security issues:** do NOT open a public bug. See [SECURITY.md](../../SECURITY.md) for private disclosure.
+  - type: dropdown
+    id: deployment-path
+    attributes:
+      label: Deployment path
+      options:
+        - CLI Quick Start (substitution helper + aws iam commands)
+        - Terraform module
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Describe the unexpected behavior. Include the exact AWS or Terraform error message if applicable.
+      placeholder: |
+        Running `terraform apply` with `iam_path = "/loki/"` produces:
+        Error: Error attaching policy ... AccessDenied: User is not authorized to perform iam:CreateRole on resource: ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: caller-identity
+    attributes:
+      label: Caller identity
+      description: Output of `aws sts get-caller-identity` (redact account ID if you prefer)
+    validations:
+      required: false
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Versions, config snippets, related issues
